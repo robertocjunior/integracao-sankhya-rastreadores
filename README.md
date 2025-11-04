@@ -108,6 +108,64 @@ ATUALCARGO_POSITION_TIMEOUT_MS=130000
 npm install
 ```
 
+#### 3. [NOVO] Arquivo `docker-compose.yml`
+
+Para facilitar a execução em produção, crie um arquivo `docker-compose.yml` na raiz do projeto com o seguinte conteúdo:
+
+```yaml
+version: '3.8'
+
+services:
+  app:
+    build: .
+    image: integracao-sankhya-atualcargo # Nome da imagem a ser gerada
+    container_name: sankhya-service
+    restart: always
+    env_file:
+      - ./.env
+```
+
+---
+
+### ▶️ Como Executar
+
+#### 1. Modo de Desenvolvimento (Local)
+Ideal para testes rápidos. O terminal deve permanecer aberto.
+
+```bash
+npm start
+```
+
+#### 2. Modo de Produção 24/7 (com Docker Compose)
+Este é o método recomendado. Ele constrói a imagem e inicia o contêiner em segundo plano, garantindo que o serviço reinicie automaticamente.
+
+Na raiz do projeto, execute:
+```bash
+docker-compose up --build -d
+```
+
+Seu serviço agora está rodando 24/7! Para pará-lo, use `docker-compose down`.
+
+---
+
+### 📊 Monitoramento e Logs
+
+#### Via Docker Compose (Recomendado)
+Use o comando abaixo para ver os logs do serviço em tempo real.
+
+```bash
+docker-compose logs -f
+```
+
+#### Via Arquivos (Local)
+Os logs são salvos automaticamente na pasta `/logs/` (criada na primeira execução).
+
+*   `logs/app.log`: Contém todos os logs de informação e sucesso.
+*   `logs/error.log`: Contém apenas os logs de erro.
+```bash
+npm install
+```
+
 ---
 
 ### ▶️ Como Executar

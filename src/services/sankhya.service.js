@@ -8,15 +8,21 @@ import {
   parseSankhyaQueryDate 
 } from '../utils/helpers.js';
 
-const { url, username, password } = config.sankhya;
-const SANKHYA_API_URL = `${url}/service.sbr`;
+// [MODIFICADO] Apenas 'username' e 'password' são globais
+const { username, password } = config.sankhya;
+
+// [NOVO] Função helper para construir a URL da API
+const getSankhyaApiUrl = (baseUrl) => `${baseUrl}/service.sbr`;
 
 /**
  * Realiza login no Sankhya MGE.
+ * @param {string} baseUrl - A URL base (principal ou contingência)
  * @returns {Promise<string>} O JSessionID
  */
-export async function loginSankhya() {
-  logger.info('Tentando login no Sankhya...');
+export async function loginSankhya(baseUrl) {
+  logger.info(`Tentando login no Sankhya em ${baseUrl}...`);
+  const SANKHYA_API_URL = getSankhyaApiUrl(baseUrl);
+
   try {
     const response = await axios.post(
       `${SANKHYA_API_URL}?serviceName=MobileLoginSP.login&outputType=json`,
@@ -34,13 +40,23 @@ export async function loginSankhya() {
       logger.info('Login no Sankhya bem-sucedido.');
       return response.data.responseBody.jsessionid.$;
     }
+
+    // [MODIFICADO] Lança erro de token se o status for '0' (ex: Acesso Negado)
+    if (response.data?.status === '0') {
+      logger.error(`Falha de autenticação no Sankhya: ${response.data.statusMessage}`, response.data);
+      throw new SankhyaTokenError(`Falha de autenticação no Sankhya: ${response.data.statusMessage}`);
+    }
     
     logger.error('Falha no login do Sankhya: jsessionid não encontrado.', response.data);
     throw new Error('jsessionid não retornado pelo Sankhya');
 
   } catch (error) {
+    // Repassa o SankhyaTokenError
+    if (error instanceof SankhyaTokenError) throw error;
+    
+    // Erros de rede (timeout, etc) são lançados como Erro genérico
     logger.error(`Erro crítico ao fazer login no Sankhya: ${error.message}`);
-    throw new Error(`Falha no login do Sankhya: ${error.message}`);
+    throw new Error(`Falha no login da Sankhya: ${error.message}`);
   }
 }
 
@@ -56,11 +72,13 @@ const getSankhyaHeaders = (sessionId) => ({
 /**
  * Busca o último timestamp (DATHOR) de cada veículo já salvo no Sankhya.
  * @param {string} sessionId - O JSessionID
+ * @param {string} baseUrl - A URL base (principal ou contingência)
  * @returns {Promise<Map<number, Date>>} Um Map<CODVEICULO, Objeto Date>
  */
-export async function getLastRecordedTimestamps(sessionId) {
+export async function getLastRecordedTimestamps(sessionId, baseUrl) {
   logger.info('Buscando últimos registros de DATHOR no Sankhya...');
   const sql = "WITH UltimoRegistro AS (SELECT CODVEICULO, DATHOR, PLACA, ROW_NUMBER() OVER (PARTITION BY CODVEICULO ORDER BY NUMREG DESC) AS RN FROM AD_LOCATCAR) SELECT CODVEICULO, DATHOR, PLACA FROM UltimoRegistro WHERE RN = 1";
+  const SANKHYA_API_URL = getSankhyaApiUrl(baseUrl);
 
   try {
     const response = await axios.post(
@@ -72,7 +90,6 @@ export async function getLastRecordedTimestamps(sessionId) {
       { headers: getSankhyaHeaders(sessionId) }
     );
 
-    // [!!] MUDANÇA AQUI: Lógica de erro de sessão expirada
     if (response.data?.status === '1') {
       const timestampMap = new Map();
       for (const row of response.data.responseBody.rows) {
@@ -97,9 +114,7 @@ export async function getLastRecordedTimestamps(sessionId) {
     }
 
   } catch (error) {
-    // Trata erros de rede E erros lançados acima
-    if (error instanceof SankhyaTokenError) throw error; // Apenas repassa o erro
-    
+    if (error instanceof SankhyaTokenError) throw error;
     logger.error(`Erro ao buscar timestamps no Sankhya: ${error.message}`);
     throw new Error(`Falha ao buscar timestamps no Sankhya: ${error.message}`);
   }
@@ -110,15 +125,17 @@ export async function getLastRecordedTimestamps(sessionId) {
  * Busca os CODVEICULO no Sankhya com base em uma lista de placas.
  * @param {string} sessionId - O JSessionID
  * @param {Array<string>} plates - Lista de placas
+ * @param {string} baseUrl - A URL base (principal ou contingência)
  * @returns {Promise<Map<string, number>>} Um Map<placa, codveiculo>
  */
-export async function getSankhyaVehicleCodes(sessionId, plates) {
+export async function getSankhyaVehicleCodes(sessionId, plates, baseUrl) {
   if (!plates || plates.length === 0) {
     return new Map();
   }
 
   const platesInClause = plates.map(p => `'${p}'`).join(',');
   const sql = `SELECT VEI.CODVEICULO, VEI.PLACA FROM TGFVEI VEI WHERE VEI.PLACA IN (${platesInClause})`;
+  const SANKHYA_API_URL = getSankhyaApiUrl(baseUrl);
 
   logger.info(`Buscando CODVEICULO para ${plates.length} placas...`);
 
@@ -132,7 +149,6 @@ export async function getSankhyaVehicleCodes(sessionId, plates) {
       { headers: getSankhyaHeaders(sessionId) }
     );
 
-    // [!!] MUDANÇA AQUI: Lógica de erro de sessão expirada
     if (response.data?.status === '1') {
       const vehicleMap = new Map();
       for (const row of response.data.responseBody.rows) {
@@ -151,9 +167,7 @@ export async function getSankhyaVehicleCodes(sessionId, plates) {
     }
 
   } catch (error) {
-    // Trata erros de rede E erros lançados acima
-    if (error instanceof SankhyaTokenError) throw error; // Apenas repassa o erro
-
+    if (error instanceof SankhyaTokenError) throw error;
     logger.error(`Erro ao buscar veículos no Sankhya: ${error.message}`);
     throw new Error(`Falha ao buscar veículos no Sankhya: ${error.message}`);
   }
@@ -165,8 +179,9 @@ export async function getSankhyaVehicleCodes(sessionId, plates) {
  * @param {Array<Object>} vehiclePositions - Lista de posições da Atualcargo
  * @param {Map<string, number>} vehicleMap - Map<placa, codveiculo>
  * @param {Map<number, Date>} lastTimestampsMap - Map<CODVEICULO, Objeto Date>
+ * @param {string} baseUrl - A URL base (principal ou contingência)
  */
-export async function savePositionsToSankhya(sessionId, vehiclePositions, vehicleMap, lastTimestampsMap) {
+export async function savePositionsToSankhya(sessionId, vehiclePositions, vehicleMap, lastTimestampsMap, baseUrl) {
   const recordsToSave = [];
   let processedCount = 0;
   let ignoredCount = 0;
@@ -229,6 +244,7 @@ export async function savePositionsToSankhya(sessionId, vehiclePositions, vehicl
   }
 
   logger.info(`Preparando para salvar ${recordsToSave.length} novos registros...`);
+  const SANKHYA_API_URL = getSankhyaApiUrl(baseUrl);
 
   const payload = {
     serviceName: 'DatasetSP.save',
@@ -251,7 +267,6 @@ export async function savePositionsToSankhya(sessionId, vehiclePositions, vehicl
       { headers: getSankhyaHeaders(sessionId) }
     );
 
-    // [!!] MUDANÇA AQUI: Lógica de erro de sessão expirada
     if (response.data?.status === '1') {
       logger.info(`Resumo da gravação: ${recordsToSave.length} registros salvos, ${ignoredCount} registros ignorados (por data).`);
     } else if (response.data?.status === '3') {
@@ -262,9 +277,7 @@ export async function savePositionsToSankhya(sessionId, vehiclePositions, vehicl
       throw new Error(`Falha ao salvar no Sankhya: ${response.data.statusMessage || 'Erro desconhecido'}`);
     }
   } catch (error) {
-     // Trata erros de rede E erros lançados acima
-    if (error instanceof SankhyaTokenError) throw error; // Apenas repassa o erro
-
+    if (error instanceof SankhyaTokenError) throw error;
     logger.error(`Erro ao salvar no Sankhya: ${error.message}`);
     throw new Error(`Falha ao salvar no Sankhya: ${error.message}`);
   }

@@ -93,6 +93,7 @@ services:
       
       # --- API SANKHYA ---
       SANKHYA_URL: "http://seu.sankhya.com.br:8180/mge"
+      SANKHYA_CONTINGENCY_URL: "http://seu.sankhya2.com.br:8180/mge"
       SANKHYA_USER: "SEU_USUARIO_SANKHYA_AQUI"
       SANKHYA_PASSWORD: "SUA_SENHA_SANKHYA_AQUI"
       

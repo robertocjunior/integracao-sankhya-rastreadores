@@ -281,7 +281,7 @@ export async function savePositionsToSankhya(sessionId, vehiclePositions, vehicl
 }
 
 // ====================================================================
-// [CORRIGIDO] FUNÇÕES DE ISCAS (AD_LOCATISC)
+// [CORRIGIDO NOVAMENTE] FUNÇÕES DE ISCAS (AD_LOCATISC)
 // ====================================================================
 
 /**
@@ -292,8 +292,10 @@ export async function savePositionsToSankhya(sessionId, vehiclePositions, vehicl
  */
 export async function getLastIscaTimestamps(sessionId, baseUrl) {
   logger.info('Buscando últimos registros de DATHOR (Iscas) no Sankhya...');
-  // [CORREÇÃO] Removida a coluna "PLACA" e adicionada "NUMISCA"
-  const sql = "WITH UltimoRegistro AS (SELECT SEQUENCIA, DATHOR, NUMISCA, ROW_NUMBER() OVER (PARTITION BY SEQUENCIA ORDER BY NUMREG DESC) AS RN FROM AD_LOCATISC) SELECT SEQUENCIA, DATHOR, NUMISCA FROM UltimoRegistro WHERE RN = 1";
+  // [CORREÇÃO] Trocado "NUMISCA" por "PLACA", assumindo que AD_LOCATISC
+  // usa "PLACA" para armazenar o ID da isca (ex: "ISCA7673"),
+  // assim como AD_LOCATCAR usa "PLACA".
+  const sql = "WITH UltimoRegistro AS (SELECT SEQUENCIA, DATHOR, PLACA, ROW_NUMBER() OVER (PARTITION BY SEQUENCIA ORDER BY NUMREG DESC) AS RN FROM AD_LOCATISC) SELECT SEQUENCIA, DATHOR, PLACA FROM UltimoRegistro WHERE RN = 1";
   const SANKHYA_API_URL = getSankhyaApiUrl(baseUrl);
 
   try {
@@ -326,7 +328,7 @@ export async function getLastIscaTimestamps(sessionId, baseUrl) {
       throw new SankhyaTokenError('Sessão Sankhya expirada (status 3).');
     } else {
       logger.error('Erro ao buscar últimos timestamps (Iscas) no Sankhya:', response.data);
-      // O erro original (ORA-00904) foi lançado daqui
+      // O erro original (ORA-00904: "NUMISCA") foi lançado daqui
       throw new Error(`Falha na query Sankhya (Iscas): ${response.data.statusMessage || 'Erro desconhecido'}`);
     }
 
@@ -338,7 +340,7 @@ export async function getLastIscaTimestamps(sessionId, baseUrl) {
 }
 
 /**
- * [NOVO] Busca as SEQUENCIAS no Sankhya com base em uma lista de placas/numisca.
+ * Busca as SEQUENCIAS no Sankhya com base em uma lista de placas/numisca.
  * @param {string} sessionId - O JSessionID
  * @param {Array<string>} iscaPlates - Lista de placas/numisca (ex: "ISCA7673")
  * @param {string} baseUrl - A URL base (principal ou contingência)
@@ -351,6 +353,7 @@ export async function getSankhyaIscaSequences(sessionId, iscaPlates, baseUrl) {
   const { fabricanteId } = config.sankhya.isca;
 
   // O valor em 'iscaPlates' (vindo da API) é o 'NUMISCA'
+  // Esta query está correta e consulta AD_CADISCA
   const iscasInClause = iscaPlates.map(p => `'${p}'`).join(',');
   const sql = `SELECT SEQUENCIA, NUMISCA FROM AD_CADISCA WHERE NUMISCA IN (${iscasInClause}) AND FABRICANTE = ${fabricanteId} AND ATIVO = 'S'`;
   const SANKHYA_API_URL = getSankhyaApiUrl(baseUrl);
@@ -427,18 +430,15 @@ export async function saveIscaPositionsToSankhya(sessionId, iscaPositions, iscaM
         const local = pos.proximity || `${pos.address?.street}, ${pos.address?.city}` || 'Endereço não disponível';
         const dataFormatada = formatSankhyaDate(pos.date);
         const link = `https://www.google.com/maps?q=${latitude},${longitude}`;
-        // Não há campo IGNIT
 
         recordsToSave.push({
           foreignKey: {
             SEQUENCIA: sequencia.toString(),
           },
           values: {
-            // Os índices 'values' (ex: '2', '3', '4') dependem da
-            // ordem exata dos 'fields' no payload abaixo.
             '2': local,
             '3': dataFormatada,
-            '4': pos.plate, // Mapeando para o campo NUMISCA
+            '4': pos.plate, // Mapeando para o campo 'PLACA' (índice 4)
             '5': latitude,
             '6': longitude,
             '7': pos.speed.toString(),
@@ -472,9 +472,9 @@ export async function saveIscaPositionsToSankhya(sessionId, iscaPositions, iscaM
       dataSetID: datasetId,
       entityName: 'AD_LOCATISC',
       standAlone: false,
-      // [CORREÇÃO] O 5º campo (índice 4) é 'NUMISCA', não 'PLACA'.
+      // [CORREÇÃO] O 5º campo (índice 4) é 'PLACA', não 'NUMISCA'.
       fields: [
-        'NUMREG', 'SEQUENCIA', 'LOCAL', 'DATHOR', 'NUMISCA',
+        'NUMREG', 'SEQUENCIA', 'LOCAL', 'DATHOR', 'PLACA',
         'LATITUDE', 'LONGITUDE', 'VELOC', 'LINK'
       ],
       records: recordsToSave,

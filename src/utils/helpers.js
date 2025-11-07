@@ -26,7 +26,7 @@ export function formatSankhyaDate(apiDate) {
 }
 
 /**
- * [NOVO] Parseia data da API Atualcargo (YYYY-MM-DD HH:mm:ss) para um objeto Date
+ * Parseia data da API Atualcargo (YYYY-MM-DD HH:mm:ss) para um objeto Date
  * @param {string} apiDate - "2025-11-03 11:38:12"
  */
 export function parseAtualcargoDate(apiDate) {
@@ -40,7 +40,7 @@ export function parseAtualcargoDate(apiDate) {
 }
 
 /**
- * [NOVO] Parseia data da query Sankhya (DDMMYYYY HH:mm:ss) para um objeto Date
+ * Parseia data da query Sankhya (DDMMYYYY HH:mm:ss) para um objeto Date
  * @param {string} sankhyaDate - "03112025 14:01:00"
  */
 export function parseSankhyaQueryDate(sankhyaDate) {
@@ -55,4 +55,15 @@ export function parseSankhyaQueryDate(sankhyaDate) {
     logger.warn(`Data (Sankhya Query) inválida: ${sankhyaDate}.`);
     return null;
   }
+}
+
+/**
+ * [NOVO] Extrai o número da placa de uma isca.
+ * @param {string} baitPlate - "ISCA3969"
+ * @returns {string} "3969"
+ */
+export function getBaitNumber(baitPlate) {
+  if (!baitPlate) return null;
+  // Remove "ISCA" (ignorando case) e espaços
+  return baitPlate.replace(/ISCA/i, '').trim();
 }

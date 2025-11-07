@@ -1,199 +1,196 @@
 import { config } from './config/index.js';
 import logger from './utils/logger.js';
-import { delay } from './utils/helpers.js';
-import { TokenError, AtualcargoTokenError, SankhyaTokenError } from './utils/errors.js';
+import { delay, getBaitNumber } from './utils/helpers.js';
+import { SankhyaTokenError } from './utils/errors.js';
+import { getAllPositions } from './services/atualcargo.service.js'; // Assumindo que este serviço existe
+import {
+  loginSankhya,
+  getLastRecordedTimestamps,
+  getSankhyaVehicleCodes,
+  savePositionsToSankhya,
+  getLastBaitTimestamps,
+  getSankhyaBaitSequences,
+  saveBaitPositionsToSankhya
+} from './services/sankhya.service.js';
 
-import * as atualcargo from './services/atualcargo.service.js';
-import * as sankhya from './services/sankhya.service.js';
+// Estado do Serviço
+let jsessionid = null;
+let currentSankhyaUrl = config.sankhya.primaryUrl; // Começa com a URL primária
 
-// --- Gerenciamento de Estado das Sessões ---
-let atualcargoToken = null;
-let atualcargoTokenTimestamp = null; // [NOVO] Guarda o timestamp do token
-let sankhyaSessionId = null;
-let cachedVehiclePositions = null;
-
-// --- Gerenciamento de contingência Sankhya ---
-let currentSankhyaUrl = config.sankhya.url;
-let primaryLoginAttempts = 0;
-const MAX_PRIMARY_ATTEMPTS = 2;
+const BAIT_PREFIX = 'ISCA';
 
 /**
- * Garante que temos um token válido da Atualcargo.
+ * Tenta login no Sankhya (primário ou contingência) e atualiza o estado.
  */
-async function ensureAtualcargoToken() {
-  // [MODIFICADO] Verificação proativa de expiração
-  const now = Date.now();
-  if (atualcargoTokenTimestamp && (now - atualcargoTokenTimestamp > config.atualcargo.tokenExpirationMs)) {
-    logger.info(`Token da Atualcargo expirou (limite de ${config.atualcargo.tokenExpirationMs / 60000} min). Forçando renovação.`);
-    atualcargoToken = null;
-    atualcargoTokenTimestamp = null;
-  }
-  
-  // Lógica original de verificação
-  if (!atualcargoToken) {
-    logger.info('Token da Atualcargo ausente ou expirado. Solicitando novo login...');
-    atualcargoToken = await atualcargo.loginAtualcargo();
-    atualcargoTokenTimestamp = Date.now(); // [MODIFICADO] Define o timestamp do novo token
+async function handleLogin() {
+  logger.info(`Tentando login em ${currentSankhyaUrl}`);
+  try {
+    jsessionid = await loginSankhya(currentSankhyaUrl);
+    logger.info('Login realizado com sucesso.');
+  } catch (error) {
+    if (error instanceof SankhyaTokenError) {
+      throw error; // Se a autenticação falhar (ex: senha errada), não adianta tentar a outra URL.
+    }
+
+    // Se o erro não for de autenticação (ex: timeout, conexão recusada)
+    logger.warn(`Falha ao logar em ${currentSankhyaUrl}. Tentando URL de contingência.`);
     
-    logger.info(`Aguardando ${config.cycle.waitAfterLoginMs / 1000}s após login...`);
-    await delay(config.cycle.waitAfterLoginMs);
+    // Troca para a URL de contingência
+    currentSankhyaUrl = (currentSankhyaUrl === config.sankhya.primaryUrl)
+      ? config.sankhya.contingencyUrl
+      : config.sankhya.primaryUrl;
+    
+    // Tenta logar na URL de contingência
+    jsessionid = await loginSankhya(currentSankhyaUrl);
+    logger.info('Login realizado com sucesso na URL de contingência.');
   }
 }
 
 /**
- * Garante que temos uma sessão válida do Sankhya.
+ * Separa a lista de posições da API entre veículos e iscas.
+ * @param {Array<Object>} allPositions - Lista de todas as posições da Atualcargo.
+ * @returns {{vehiclePositions: Array<Object>, baitPositions: Array<Object>}}
  */
-async function ensureSankhyaSession() {
-  if (!sankhyaSessionId) {
-    logger.info(`Sessão Sankhya ausente. Solicitando novo login em ${currentSankhyaUrl}...`);
-    sankhyaSessionId = await sankhya.loginSankhya(currentSankhyaUrl);
-    logger.info(`Login Sankhya bem-sucedido em: ${currentSankhyaUrl}`);
-    
-    if (currentSankhyaUrl === config.sankhya.url) {
-        primaryLoginAttempts = 0;
+function separatePositions(allPositions) {
+  const vehiclePositions = [];
+  const baitPositions = [];
+
+  if (!allPositions || allPositions.length === 0) {
+    logger.warn('API Atualcargo não retornou posições.');
+    return { vehiclePositions, baitPositions };
+  }
+
+  for (const pos of allPositions) {
+    if (pos.plate && pos.plate.toUpperCase().startsWith(BAIT_PREFIX)) {
+      baitPositions.push(pos);
+    } else {
+      vehiclePositions.push(pos);
     }
   }
+
+  logger.info(`Posições separadas: ${vehiclePositions.length} veículos, ${baitPositions.length} iscas.`);
+  return { vehiclePositions, baitPositions };
 }
 
 /**
- * ETAPA 1: Busca dados da Atualcargo (se o cache estiver vazio).
+ * Processa o fluxo completo para Veículos (AD_LOCATCAR).
+ * @param {string} sessionId - JSessionID
+ * @param {string} baseUrl - URL do Sankhya
+ * @param {Array<Object>} positions - Lista de posições de veículos
  */
-async function runAtualcargoStep() {
-  if (cachedVehiclePositions) {
-    logger.info('Usando posições do cache. Pulando busca na Atualcargo.');
-    return;
-  }
-  
-  logger.info('Cache de posições vazio. Buscando na Atualcargo...');
-  await ensureAtualcargoToken();
-  const vehiclePositions = await atualcargo.getAtualcargoPositions(atualcargoToken);
-
-  if (!vehiclePositions || vehiclePositions.length === 0) {
-    logger.info('Nenhuma posição de veículo recebida. Encerrando ciclo.');
-    return;
-  }
-
-  cachedVehiclePositions = vehiclePositions;
-}
-
-/**
- * ETAPA 2: Processa e salva os dados no Sankhya (usando o cache).
- */
-async function runSankhyaStep() {
-  if (!cachedVehiclePositions) {
-    logger.info('Cache de posições vazio. Pulando etapa do Sankhya.');
-    return;
-  }
-  
-  logger.info(`Processando ${cachedVehiclePositions.length} posições do cache para o Sankhya...`);
-  
-  const plates = [...new Set(cachedVehiclePositions.map(pos => pos.plate).filter(p => p))];
-  if (plates.length === 0) {
-    logger.info('Nenhuma placa válida nos dados do cache. Limpando cache.');
-    cachedVehiclePositions = null;
+async function processVehicles(sessionId, baseUrl, positions) {
+  if (positions.length === 0) {
+    logger.info('[Veículos] Nenhuma posição de veículo para processar.');
     return;
   }
 
   try {
-    await ensureSankhyaSession(); 
+    // 1. Extrair placas únicas
+    const plates = [...new Set(positions.map(p => p.plate).filter(Boolean))];
+    if (plates.length === 0) {
+      logger.warn('[Veículos] Posições de veículos recebidas, mas sem placas válidas.');
+      return;
+    }
 
-    const vehicleMap = await sankhya.getSankhyaVehicleCodes(sankhyaSessionId, plates, currentSankhyaUrl);
-    const lastTimestamps = await sankhya.getLastRecordedTimestamps(sankhyaSessionId, currentSankhyaUrl);
-    
-    await sankhya.savePositionsToSankhya(
-      sankhyaSessionId, 
-      cachedVehiclePositions, 
-      vehicleMap,
-      lastTimestamps,
-      currentSankhyaUrl
-    );
-    
-    logger.info('Dados salvos no Sankhya com sucesso. Limpando cache.');
-    cachedVehiclePositions = null;
+    // 2. Buscar códigos dos veículos no Sankhya
+    const vehicleMap = await getSankhyaVehicleCodes(sessionId, plates, baseUrl);
+
+    // 3. Buscar últimos timestamps salvos
+    const lastTimestampsMap = await getLastRecordedTimestamps(sessionId, baseUrl);
+
+    // 4. Salvar novas posições
+    await savePositionsToSankhya(sessionId, positions, vehicleMap, lastTimestampsMap, baseUrl);
 
   } catch (error) {
-    logger.error(`Falha na etapa do Sankhya: ${error.message}`);
-    if (error instanceof SankhyaTokenError) {
-      sankhyaSessionId = null; 
+    logger.error(`[Veículos] Erro no processamento: ${error.message}`);
+    if (error instanceof SankhyaTokenError) throw error; // Repassa erro de sessão
+  }
+}
+
+/**
+ * Processa o fluxo completo para Iscas (AD_LOCATISC).
+ * @param {string} sessionId - JSessionID
+ * @param {string} baseUrl - URL do Sankhya
+ * @param {Array<Object>} positions - Lista de posições de iscas
+ */
+async function processBaits(sessionId, baseUrl, positions) {
+  if (positions.length === 0) {
+    logger.info('[Iscas] Nenhuma posição de isca para processar.');
+    return;
+  }
+
+  try {
+    // 1. Extrair números de isca únicos
+    const baitNumbers = [...new Set(positions.map(p => getBaitNumber(p.plate)).filter(Boolean))];
+    if (baitNumbers.length === 0) {
+      logger.warn('[Iscas] Posições de iscas recebidas, mas sem números válidos (ex: ISCA1234).');
+      return;
     }
-    throw error;
+
+    // 2. Buscar SEQUENCIAS das iscas no Sankhya (AD_CADISCA)
+    const baitMap = await getSankhyaBaitSequences(sessionId, baitNumbers, baseUrl);
+
+    // 3. Buscar últimos timestamps salvos (AD_LOCATISC)
+    const lastTimestampsMap = await getLastBaitTimestamps(sessionId, baseUrl);
+
+    // 4. Salvar novas posições (AD_LOCATISC)
+    await saveBaitPositionsToSankhya(sessionId, positions, baitMap, lastTimestampsMap, baseUrl);
+
+  } catch (error) {
+    logger.error(`[Iscas] Erro no processamento: ${error.message}`);
+    if (error instanceof SankhyaTokenError) throw error; // Repassa erro de sessão
   }
 }
 
 
-/**
- * Inicia o loop principal do serviço.
- */
-export async function startApp() {
-  logger.info('Iniciando serviço de integração de rastreamento...');
+async function mainServiceLoop() {
+  logger.info('Iniciando ciclo do serviço...');
   
-  while (true) {
-    try {
-      await runAtualcargoStep();
-      await runSankhyaStep();
-      
-      logger.info('--- Ciclo de integração concluído ---');
-      logger.info(`Aguardando ${config.cycle.waitBetweenCyclesMs / 1000}s para o próximo ciclo...`);
-      await delay(config.cycle.waitBetweenCyclesMs);
-
-    } catch (error) {
-      logger.error(`Erro grave no ciclo: ${error.message}`, error);
-
-      // 1. Erro de Token/Auth da ATUALCARGO
-      if (error instanceof AtualcargoTokenError) {
-        logger.warn('Forçando re-login da Atualcargo no próximo ciclo.');
-        atualcargoToken = null;
-        atualcargoTokenTimestamp = null; // [MODIFICADO] Limpa o timestamp
-        cachedVehiclePositions = null;
-      
-      // 2. Erro de Token/Auth do SANKHYA
-      } else if (error instanceof SankhyaTokenError) {
-        logger.warn(`Erro de Token/Sessão Sankhya: ${error.message}`);
-        sankhyaSessionId = null; 
-
-        if (config.sankhya.contingencyUrl && currentSankhyaUrl === config.sankhya.contingencyUrl) {
-          logger.warn('Acesso negado ou token expirou na contingência. Voltando para o principal.');
-          currentSankhyaUrl = config.sankhya.url;
-          primaryLoginAttempts = 0;
-        } else {
-          logger.error('Acesso negado no principal. O ciclo tentará novamente no principal.');
-        }
-      
-      // 3. Erro Genérico (Rede, Timeout, 425, 500, etc.)
-      } else {
-        logger.warn(`Erro inesperado ou de rede: ${error.message}`);
-        
-        if (error.message.toLowerCase().includes('atualcargo')) {
-            logger.warn('Erro de rede ou Rate Limit (425) na Atualcargo. Limpando token e cache.');
-            atualcargoToken = null;
-            atualcargoTokenTimestamp = null; // [MODIFICADO] Limpa o timestamp
-            cachedVehiclePositions = null;
-        
-        } else {
-            logger.warn('Erro de rede no Sankhya. Iniciando lógica de contingência.');
-            sankhyaSessionId = null;
-
-            if (config.sankhya.contingencyUrl) {
-                if (currentSankhyaUrl === config.sankhya.url) {
-                    primaryLoginAttempts++;
-                    logger.info(`Falha de rede no principal. Tentativa ${primaryLoginAttempts}/${MAX_PRIMARY_ATTEMPTS}.`);
-                    
-                    if (primaryLoginAttempts >= MAX_PRIMARY_ATTEMPTS) {
-                        logger.warn('Limite de falhas no principal atingido. Alternando para contingência.');
-                        currentSankhyaUrl = config.sankhya.contingencyUrl;
-                        primaryLoginAttempts = 0;
-                    }
-                } else {
-                    logger.warn('Falha de rede na contingência. Tentando novamente na contingência.');
-                }
-            } else {
-                logger.warn('Erro de rede no Sankhya, mas não há URL de contingência definida.');
-            }
-        }
-      }
-
-      logger.info(`Aguardando ${config.cycle.waitAfterErrorMs / 1000}s antes de tentar novamente...`);
-      await delay(config.cycle.waitAfterErrorMs);
+  try {
+    // 1. Garantir Login no Sankhya
+    if (!jsessionid) {
+      await handleLogin();
     }
+
+    // 2. Buscar dados da API Externa (Atualcargo)
+    // Se falhar, o ciclo é interrompido e tenta novamente após o delay
+    const allPositions = await getAllPositions();
+
+    // 3. Separar posições (Veículos vs Iscas)
+    const { vehiclePositions, baitPositions } = separatePositions(allPositions);
+
+    // 4. Processar ambos os fluxos (Veículos e Iscas)
+    // Usamos Promise.all para que, se um falhar (ex: erro de sessão), o outro também pare
+    // e o erro seja pego pelo catch principal.
+    await Promise.all([
+      processVehicles(jsessionid, currentSankhyaUrl, vehiclePositions),
+      processBaits(jsessionid, currentSankhyaUrl, baitPositions)
+    ]);
+
+  } catch (error) {
+    if (error instanceof SankhyaTokenError) {
+      logger.warn(`Sessão Sankhya expirada ou inválida: ${error.message}. Tentando novo login no próximo ciclo.`);
+      jsessionid = null; // Força novo login
+    } else {
+      // Erros críticos (ex: falha na API Atualcargo, erros inesperados)
+      logger.error(`Erro crítico no ciclo: ${error.message}`, error);
+      // Aqui, podemos decidir se devemos parar o serviço ou apenas tentar novamente.
+      // Por enquanto, apenas registramos e o loop continuará.
+    }
+  }
+
+  // 5. Aguardar o próximo ciclo
+  const interval = config.service.intervalSeconds * 1000;
+  logger.info(`Ciclo concluído. Aguardando ${config.service.intervalSeconds} segundos...`);
+  await delay(interval);
+}
+
+/**
+ * Inicia o serviço.
+ */
+export async function startService() {
+  logger.info('Serviço de Sincronização Atualcargo-Sankhya iniciado.');
+  while (true) {
+    await mainServiceLoop();
   }
 }

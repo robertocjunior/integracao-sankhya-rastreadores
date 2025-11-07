@@ -2,8 +2,7 @@ import { config } from './config/index.js';
 import logger from './utils/logger.js';
 import { delay, getBaitNumber } from './utils/helpers.js';
 import { SankhyaTokenError } from './utils/errors.js';
-// [CORRIGIDO] Corrigido o nome da função importada
-import { getAtualcargoPositions } from './services/atualcargo.service.js';
+import { getAllPositions } from './services/atualcargo.service.js'; // Assumindo que este serviço existe
 import {
   loginSankhya,
   getLastRecordedTimestamps,
@@ -143,9 +142,7 @@ async function processBaits(sessionId, baseUrl, positions) {
   }
 }
 
-/**
- * Loop principal do serviço.
- */
+
 async function mainServiceLoop() {
   logger.info('Iniciando ciclo do serviço...');
   
@@ -157,8 +154,7 @@ async function mainServiceLoop() {
 
     // 2. Buscar dados da API Externa (Atualcargo)
     // Se falhar, o ciclo é interrompido e tenta novamente após o delay
-    // [CORRIGIDO] Usando o nome da função correta
-    const allPositions = await getAtualcargoPositions();
+    const allPositions = await getAllPositions();
 
     // 3. Separar posições (Veículos vs Iscas)
     const { vehiclePositions, baitPositions } = separatePositions(allPositions);

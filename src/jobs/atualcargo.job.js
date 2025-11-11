@@ -3,7 +3,7 @@ import { jobsConfig, sankhyaConfig, appConfig } from '../config/index.js';
 import { delay } from '../utils/dateTime.js';
 import { TokenError, AtualcargoTokenError, SankhyaTokenError } from '../utils/errors.js';
 import { createJobStateManager } from './job.scheduler.js';
-import statusManager from '../utils/statusManager.js'; // IMPORTA O STATUS MANAGER
+import statusManager from '../utils/statusManager.js'; 
 
 import * as atualcargoApi from '../connectors/atualcargo.connector.js';
 import * as sankhyaProcessor from '../sankhya/sankhya.processor.js';
@@ -35,9 +35,7 @@ async function ensureAtualcargoToken() {
 
 export async function run() {
   try {
-    // --------------------------------------------------
-    // ETAPA 1: EXTRACT (Atualcargo)
-    // --------------------------------------------------
+    // ETAPA 1: EXTRACT
     if (!state.getCache()) {
       statusManager.updateJobStatus(JOB_NAME, 'running', 'Cache vazio. Buscando na API...');
       logger.info('Cache de posições vazio. Buscando na API...');
@@ -47,7 +45,7 @@ export async function run() {
       const positions = await atualcargoApi.getAtualcargoPositions(token);
       
       if (!positions || positions.length === 0) {
-        statusManager.updateJobStatus(JOB_NAME, 'idle', 'Nenhuma posição recebida. Aguardando próximo ciclo.');
+        statusManager.updateJobStatus(JOB_NAME, 'idle', 'Nenhuma posição recebida.');
         logger.info('Nenhuma posição de veículo recebida. Encerrando ciclo.');
         return; 
       }
@@ -61,12 +59,10 @@ export async function run() {
       logger.info('Usando posições do cache. Pulando busca na API.');
     }
 
-    // --------------------------------------------------
     // ETAPA 2: LOAD (Sankhya)
-    // --------------------------------------------------
     const cachedData = state.getCache();
     if (!cachedData || cachedData.length === 0) {
-      statusManager.updateJobStatus(JOB_NAME, 'idle', 'Cache vazio. Aguardando próximo ciclo.');
+      statusManager.updateJobStatus(JOB_NAME, 'idle', 'Cache vazio.');
       logger.info('Cache de posições vazio. Pulando etapa do Sankhya.');
       return;
     }
@@ -81,11 +77,11 @@ export async function run() {
     
     state.handleSankhyaSuccess(); 
     state.clearCache(); 
-    statusManager.updateJobStatus(JOB_NAME, 'idle', 'Ciclo concluído com sucesso.');
+    statusManager.updateJobStatus(JOB_NAME, 'idle', 'Ciclo concluído com sucesso.'); // Seta o status final
 
   } catch (error) {
     logger.error(`Erro no ciclo [${JOB_NAME}]: ${error.message}`);
-    statusManager.updateJobStatus(JOB_NAME, 'error', error.message); // ATUALIZA O STATUS PARA ERRO
+    statusManager.updateJobStatus(JOB_NAME, 'error', error.message); // Seta o status de erro
 
     if (error instanceof AtualcargoTokenError) {
       logger.warn('Forçando re-login da Atualcargo no próximo ciclo.');

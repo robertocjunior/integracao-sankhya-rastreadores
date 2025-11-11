@@ -1,12 +1,12 @@
 import axios from 'axios';
-import { sankhyaConfig } from '../config/sankhya.js'; // CAMINHO CORRIGIDO
-import { appConfig } from '../config/app.js'; // CAMINHO CORRIGIDO
-import { createLogger } from '../utils/logger.js'; // CAMINHO CORRIGIDO
+import { sankhyaConfig, appConfig } from '../config/index.js';
+import { createLogger } from '../utils/logger.js';
+import { SankhyaTokenError } from '../utils/errors.js';
 import { 
-  formatForSankhyaInsert, // FUNÇÃO CORRIGIDA
+  formatForSankhyaInsert,
   parseSitraxDate,
   parseSankhyaQueryDate 
-} from '../utils/dateTime.js'; // CAMINHO CORRIGIDO
+} from '../utils/dateTime.js';
 import { TextDecoder } from 'util';
 
 const logger = createLogger('SankhyaAPI');
@@ -43,8 +43,8 @@ async function performLogin(baseUrl) {
     const loginBody = {
       serviceName: 'MobileLoginSP.login',
       requestBody: {
-        NOMUSU: { $: sankhyaConfig.username }, // CORRIGIDO
-        INTERNO: { $: sankhyaConfig.password }, // CORRIGIDO
+        NOMUSU: { $: sankhyaConfig.username },
+        INTERNO: { $: sankhyaConfig.password },
         KEEPCONNECTED: { $: 'S' },
       },
     };
@@ -200,8 +200,9 @@ export async function insertVehicleHistory(records, baseUrl) {
   logger.info(`[Sankhya] Inserindo ${records.length} novos registros em AD_LOCATCAR...`);
 
   const formattedRecords = records.map(r => {
-    const dathorStr = formatForSankhyaInsert(r.date); // CORRIGIDO
-    const link = `http://googleusercontent.com/maps/google.com/3{r.lat},${r.lon}`;
+    const dathorStr = formatForSankhyaInsert(r.date);
+    // ***** ESTA É A CORREÇÃO (LINK) *****
+    const link = `http://googleusercontent.com/maps/google.com/3${r.lat},${r.lon}`;
 
     return {
       foreignKey: {
@@ -246,8 +247,9 @@ export async function insertIscaHistory(records, baseUrl) {
   logger.info(`[Sankhya] Inserindo ${records.length} novos registros em AD_LOCATISC...`);
 
   const formattedRecords = records.map(r => {
-    const dathorStr = formatForSankhyaInsert(r.date); // CORRIGIDO
-    const link = `http://googleusercontent.com/maps/google.com/3{r.lat},${r.lon}`;
+    const dathorStr = formatForSankhyaInsert(r.date);
+    // ***** ESTA É A CORREÇÃO (LINK) *****
+    const link = `http://googleusercontent.com/maps/google.com/3${r.lat},${r.lon}`;
     
     return {
       foreignKey: {

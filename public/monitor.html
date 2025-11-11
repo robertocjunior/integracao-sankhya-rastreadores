@@ -42,6 +42,7 @@
             align-items: center;
             justify-content: center;
             font-size: 24px;
+            flex-shrink: 0;
         }
         .job-details {
             flex-grow: 1;
@@ -61,7 +62,14 @@
         .job-timestamp {
             font-size: 0.8em;
             color: #888;
-            margin-top: 5px;
+            margin-top: 8px;
+        }
+        /* NOVO: Estilo do Countdown */
+        .job-countdown {
+            font-size: 0.9em;
+            font-weight: 500;
+            color: #1c3b5f; /* Azul escuro */
+            margin-top: 8px;
         }
 
         /* --- Status Colors --- */
@@ -104,17 +112,45 @@
     <script src="/socket.io/socket.io.js"></script>
     <script>
         const container = document.getElementById('status-container');
-        const jobTemplates = {}; // Cache para os elementos HTML
+        let countdownInterval;
 
         function getIconForStatus(status) {
-            if (status === 'running') return '⏳'; // Ampulheta
-            if (status === 'error') return '❌'; // X
-            return '✓'; // OK (Idle)
+            if (status === 'running') return '⏳';
+            if (status === 'error') return '❌';
+            return '✓';
+        }
+
+        // NOVO: Função que atualiza os contadores
+        function updateCountdowns() {
+            const timers = document.querySelectorAll('.job-countdown');
+            if (timers.length === 0) return;
+
+            timers.forEach(timerEl => {
+                const nextRun = parseInt(timerEl.dataset.nextRun, 10);
+                if (isNaN(nextRun) || nextRun === 0) {
+                    timerEl.innerHTML = '';
+                    return;
+                }
+
+                const now = Date.now();
+                const diffMs = nextRun - now;
+
+                if (diffMs <= 0) {
+                    timerEl.innerHTML = 'Iniciando novo ciclo...';
+                    return;
+                }
+
+                const totalSeconds = Math.floor(diffMs / 1000);
+                const minutes = Math.floor(totalSeconds / 60);
+                const seconds = totalSeconds % 60;
+
+                timerEl.innerHTML = `Próximo ciclo em: ${minutes}m ${seconds.toString().padStart(2, '0')}s`;
+            });
         }
 
         // Função principal para desenhar o painel
         function renderStatus(jobs) {
-            container.innerHTML = ''; // Limpa o container
+            container.innerHTML = ''; 
 
             if (Object.keys(jobs).length === 0) {
                  container.innerHTML = '<div class="job">Aguardando o primeiro status...</div>';
@@ -123,10 +159,9 @@
 
             for (const jobName in jobs) {
                 const job = jobs[jobName];
-
-                // Formata a data
                 const date = new Date(job.lastUpdate);
                 const timestamp = date.toLocaleString('pt-BR');
+                const nextRunTimestamp = job.nextRun ? new Date(job.nextRun).getTime() : 0;
 
                 // Cria o HTML do job
                 const jobHtml = `
@@ -136,11 +171,11 @@
                     <div class="job-details">
                         <h2 class="job-name">${job.name}</h2>
                         <p class="job-message">${job.message}</p>
+                        <div class="job-countdown" data-next-run="${nextRunTimestamp}"></div>
                         <div class="job-timestamp">Última Atualização: ${timestamp}</div>
                     </div>
                 `;
                 
-                // Reutiliza ou cria o elemento div
                 let jobEl = document.getElementById(`job-${jobName}`);
                 if (!jobEl) {
                     jobEl = document.createElement('div');
@@ -151,12 +186,16 @@
                 
                 jobEl.innerHTML = jobHtml;
             }
+            
+            // (Re)inicia o timer global
+            if (countdownInterval) clearInterval(countdownInterval);
+            updateCountdowns(); // Roda imediatamente
+            countdownInterval = setInterval(updateCountdowns, 1000); // Roda a cada segundo
         }
 
         // Conecta ao servidor
         const socket = io();
 
-        // 1. Busca o status atual ao carregar a página
         fetch('/status')
             .then(res => res.json())
             .then(initialStatus => {
@@ -166,7 +205,6 @@
                 container.innerHTML = '<div class="job">Erro ao conectar ao servidor.</div>';
             });
 
-        // 2. Ouve por atualizações em tempo real
         socket.on('status-update', (jobs) => {
             renderStatus(jobs);
         });

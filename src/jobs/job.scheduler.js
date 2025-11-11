@@ -1,7 +1,7 @@
-import logger, { createLogger } from '../utils/logger.js'; // Importa o createLogger daqui
-import { delay } from '../utils/dateTime.js'; // CORRIGIDO: de 'helpers.js' para 'dateTime.js'
-import { appConfig } from '../config/app.js';
-import { sankhyaConfig } from '../config/sankhya.js'; // Importa o sankhyaConfig
+import logger, { createLogger } from '../utils/logger.js';
+import { delay } from '../utils/dateTime.js';
+import { appConfig, sankhyaConfig } from '../config/index.js';
+import statusManager from '../utils/statusManager.js'; // IMPORTA O STATUS MANAGER
 
 /**
  * Cria e gerencia um loop de job seguro (setTimeout recursivo).
@@ -13,29 +13,52 @@ export function createJobLoop(name, jobFunction, intervalMs) {
   logger.info(
     `[JobScheduler] Agendando job [${name}] para rodar a cada ${intervalMs / 60000} minutos.`
   );
+  
+  // Seta o status inicial como 'idle' e agenda a primeira execução
+  const firstRunTimestamp = Date.now() + 1000; // 1 segundo a partir de agora
+  statusManager.updateJobStatus(name, 'idle', 'Aguardando primeira execução...', firstRunTimestamp);
 
   const loop = async () => {
     logger.info(`--- [Iniciando Job: ${name}] ---`);
     try {
+      // ATUALIZADO: Limpa o timer 'nextRun' e seta o status para 'running'
+      statusManager.updateJobStatus(name, 'running', 'Iniciando...', null);
       await jobFunction();
     } catch (error) {
-      // Pega erros não tratados dentro da função 'run' do job
       logger.error(
         `[Job: ${name}] Erro fatal não tratado no loop: ${error.message}`,
         { stack: error.stack }
       );
+      // Se o job falhar, ele mesmo deve setar o status de erro no statusManager
     } finally {
       const nextRunMin = intervalMs / 60000;
       logger.info(`[Job: ${name}] Ciclo finalizado. Próxima execução em ${nextRunMin} min.`);
       logger.info(`-----------------------------------`);
+      
+      // --- NOVO CÓDIGO ---
+      // Pega o status atual (que foi definido pelo job, ex: 'idle' ou 'error')
+      const jobKey = name.toLowerCase();
+      const currentStatus = statusManager.getStatus()[jobKey] || { status: 'idle', message: 'Ciclo concluído.' };
+      
+      // Calcula o timestamp exato da próxima execução
+      const nextRunTimestamp = Date.now() + intervalMs;
+      
+      // Atualiza o status com a data da próxima execução
+      statusManager.updateJobStatus(
+          name, 
+          currentStatus.status, 
+          currentStatus.message, 
+          nextRunTimestamp // Passa o novo timestamp
+      );
+      // --- FIM DO NOVO CÓDIGO ---
       
       // Agenda a próxima execução
       setTimeout(loop, intervalMs);
     }
   };
 
-  // Inicia o primeiro ciclo
-  loop();
+  // Inicia o primeiro ciclo (agora com o delay inicial)
+  setTimeout(loop, 1000);
 }
 
 

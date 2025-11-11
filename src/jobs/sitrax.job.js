@@ -3,7 +3,7 @@ import { jobsConfig, sankhyaConfig, appConfig } from '../config/index.js';
 import { delay } from '../utils/dateTime.js';
 import { SankhyaTokenError } from '../utils/errors.js';
 import { createJobStateManager } from './job.scheduler.js';
-import statusManager from '../utils/statusManager.js'; // IMPORTA O STATUS MANAGER
+import statusManager from '../utils/statusManager.js'; 
 
 import * as sitraxApi from '../connectors/sitrax.connector.js';
 import * as sankhyaProcessor from '../sankhya/sankhya.processor.js';
@@ -17,16 +17,14 @@ const state = createJobStateManager(JOB_NAME, { sankhya: sankhyaConfig, app: app
 
 export async function run() {
   try {
-    // --------------------------------------------------
     // ETAPA 1: EXTRACT (Sitrax)
-    // --------------------------------------------------
     if (!state.getCache()) {
       statusManager.updateJobStatus(JOB_NAME, 'running', 'Cache vazio. Buscando na API...');
       logger.info('Cache de posições vazio. Buscando na API...');
       const positions = await sitraxApi.getSitraxPositions();
       
       if (!positions || positions.length === 0) {
-        statusManager.updateJobStatus(JOB_NAME, 'idle', 'Nenhuma posição recebida. Aguardando próximo ciclo.');
+        statusManager.updateJobStatus(JOB_NAME, 'idle', 'Nenhuma posição recebida.');
         logger.info('Nenhuma posição de isca recebida. Encerrando ciclo.');
         return;
       }
@@ -40,12 +38,10 @@ export async function run() {
       logger.info('Usando posições do cache. Pulando busca na API.');
     }
 
-    // --------------------------------------------------
     // ETAPA 2: LOAD (Sankhya)
-    // --------------------------------------------------
     const cachedData = state.getCache();
     if (!cachedData || cachedData.length === 0) {
-      statusManager.updateJobStatus(JOB_NAME, 'idle', 'Cache vazio. Aguardando próximo ciclo.');
+      statusManager.updateJobStatus(JOB_NAME, 'idle', 'Cache vazio.');
       logger.info('Cache de posições vazio. Pulando etapa do Sankhya.');
       return;
     }
@@ -60,11 +56,11 @@ export async function run() {
     
     state.handleSankhyaSuccess();
     state.clearCache(); 
-    statusManager.updateJobStatus(JOB_NAME, 'idle', 'Ciclo concluído com sucesso.');
+    statusManager.updateJobStatus(JOB_NAME, 'idle', 'Ciclo concluído com sucesso.'); // Seta o status final
 
   } catch (error) {
     logger.error(`Erro no ciclo [${JOB_NAME}]: ${error.message}`);
-    statusManager.updateJobStatus(JOB_NAME, 'error', error.message); // ATUALIZA O STATUS PARA ERRO
+    statusManager.updateJobStatus(JOB_NAME, 'error', error.message); // Seta o status de erro
 
     if (error instanceof SankhyaTokenError) {
       logger.warn(`Erro de Token/Sessão Sankhya. O job tentará novamente com os mesmos dados.`);

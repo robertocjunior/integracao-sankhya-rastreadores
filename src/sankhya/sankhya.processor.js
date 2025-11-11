@@ -1,7 +1,7 @@
-import { createLogger } from '../utils/logger.js'; // CAMINHO CORRIGIDO
+import { createLogger } from '../utils/logger.js';
 import * as sankhyaApi from './sankhya.api.js';
 import { isNewer } from '../utils/dateTime.js';
-import { appConfig } from '../config/app.js';
+import { appConfig } from '../config/index.js';
 
 const logger = createLogger('SankhyaProcessor');
 
@@ -69,7 +69,12 @@ export async function processPositions(standardPositions, sourceName, sankhyaUrl
       logger.debug(`[${sourceName}] Isca ${isca.identifier} ignorada (não cadastrada no Sankhya).`);
       continue;
     }
-    const lastDathor = lastIscaHistory.get(isca.identifier);
+    
+    // ***** ESTA É A CORREÇÃO *****
+    // Estava: lastIscaHistory.get(isca.identifier)
+    // Corrigido: lastIscaHistory.get(sequencia)
+    const lastDathor = lastIscaHistory.get(sequencia);
+    
     if (isNewer(isca.date, lastDathor)) {
       newIscaRecords.push({ ...isca, sequencia });
     }

@@ -27,15 +27,22 @@ class StatusManager {
    * @param {string} jobName - O nome do job (ex: 'Atualcargo')
    * @param {'idle' | 'running' | 'error'} status - O novo estado
    * @param {string} message - A mensagem de status
+   * @param {number | null} [nextRunTimestamp] - O timestamp (Date.now() + interval) da próxima execução
    */
-  updateJobStatus(jobName, status, message) {
+  updateJobStatus(jobName, status, message, nextRunTimestamp = null) {
     const jobKey = jobName.toLowerCase();
     
+    // Se o status não for 'idle', limpa o timer anterior
+    const clearNextRun = status !== 'idle';
+
     this.status[jobKey] = {
       name: jobName,
       status: status,
       message: message,
       lastUpdate: new Date().toISOString(),
+      // NOVO: Adiciona o timestamp da próxima execução
+      // Se o status não for 'idle', seta como nulo para parar o timer
+      nextRun: clearNextRun ? null : nextRunTimestamp, 
     };
     
     // Envia a atualização para todos os clientes (navegadores) conectados

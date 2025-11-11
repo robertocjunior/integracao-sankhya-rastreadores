@@ -17,7 +17,9 @@ RUN npm install pm2 -g
 # 6. Copia o restante do código-fonte
 COPY . .
 
-# 7. Comando para iniciar o serviço
-# "pm2-runtime" é a versão do PM2 feita para rodar dentro de containers
-# Ele agora inicia usando o arquivo de configuração
+# 7. Expõe a porta do painel de monitoramento
+EXPOSE 9222
+
+# 8. Comando para iniciar o serviço
+# Usa o ecosystem.config.cjs para iniciar em modo cluster
 CMD ["pm2-runtime", "start", "ecosystem.config.cjs"]

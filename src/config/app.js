@@ -11,4 +11,7 @@ export const appConfig = {
   
   // Tempo de espera do Job após um erro
   jobRetryDelayMs: parseInt(process.env.JOB_RETRY_DELAY_MS, 10) || 60000,
+
+  // Porta do painel web de monitoramento
+  monitorPort: parseInt(process.env.MONITOR_PORT, 10) || 9222,
 };

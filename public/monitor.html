@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-g">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hub de Integrações - Status</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f0f2f5;
+            color: #333;
+            margin: 0;
+            padding: 20px;
+        }
+        h1 {
+            text-align: center;
+            color: #1c3b5f;
+        }
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: #fff;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+            overflow: hidden;
+        }
+        .job {
+            display: flex;
+            align-items: center;
+            padding: 20px;
+            border-bottom: 1px solid #eee;
+        }
+        .job:last-child {
+            border-bottom: none;
+        }
+        .job-status-icon {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            margin-right: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+        }
+        .job-details {
+            flex-grow: 1;
+        }
+        .job-name {
+            font-size: 1.5em;
+            font-weight: 600;
+            color: #000;
+            margin: 0 0 5px 0;
+        }
+        .job-message {
+            font-size: 1em;
+            color: #555;
+            margin: 0;
+            word-break: break-word;
+        }
+        .job-timestamp {
+            font-size: 0.8em;
+            color: #888;
+            margin-top: 5px;
+        }
+
+        /* --- Status Colors --- */
+        .status-idle {
+            background-color: #e0e0e0;
+            color: #757575;
+        }
+        .status-running {
+            background-color: #d1eaff;
+            color: #0056b3;
+            animation: pulse-blue 2s infinite;
+        }
+        .status-error {
+            background-color: #ffcdd2;
+            color: #c62828;
+            animation: pulse-red 2s infinite;
+        }
+
+        @keyframes pulse-blue {
+            0% { box-shadow: 0 0 0 0 rgba(0, 86, 179, 0.4); }
+            70% { box-shadow: 0 0 0 10px rgba(0, 86, 179, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(0, 86, 179, 0); }
+        }
+        @keyframes pulse-red {
+            0% { box-shadow: 0 0 0 0 rgba(198, 40, 40, 0.4); }
+            70% { box-shadow: 0 0 0 10px rgba(198, 40, 40, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(198, 40, 40, 0); }
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Painel de Monitoramento - Hub de Integração</h1>
+    <div id="status-container" class="container">
+        <div id="placeholder" class="job">
+            Conectando ao servidor...
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const container = document.getElementById('status-container');
+        const jobTemplates = {}; // Cache para os elementos HTML
+
+        function getIconForStatus(status) {
+            if (status === 'running') return '⏳'; // Ampulheta
+            if (status === 'error') return '❌'; // X
+            return '✓'; // OK (Idle)
+        }
+
+        // Função principal para desenhar o painel
+        function renderStatus(jobs) {
+            container.innerHTML = ''; // Limpa o container
+
+            if (Object.keys(jobs).length === 0) {
+                 container.innerHTML = '<div class="job">Aguardando o primeiro status...</div>';
+                 return;
+            }
+
+            for (const jobName in jobs) {
+                const job = jobs[jobName];
+
+                // Formata a data
+                const date = new Date(job.lastUpdate);
+                const timestamp = date.toLocaleString('pt-BR');
+
+                // Cria o HTML do job
+                const jobHtml = `
+                    <div class="job-status-icon status-${job.status}" title="${job.status}">
+                        ${getIconForStatus(job.status)}
+                    </div>
+                    <div class="job-details">
+                        <h2 class="job-name">${job.name}</h2>
+                        <p class="job-message">${job.message}</p>
+                        <div class="job-timestamp">Última Atualização: ${timestamp}</div>
+                    </div>
+                `;
+                
+                // Reutiliza ou cria o elemento div
+                let jobEl = document.getElementById(`job-${jobName}`);
+                if (!jobEl) {
+                    jobEl = document.createElement('div');
+                    jobEl.id = `job-${jobName}`;
+                    jobEl.className = 'job';
+                    container.appendChild(jobEl);
+                }
+                
+                jobEl.innerHTML = jobHtml;
+            }
+        }
+
+        // Conecta ao servidor
+        const socket = io();
+
+        // 1. Busca o status atual ao carregar a página
+        fetch('/status')
+            .then(res => res.json())
+            .then(initialStatus => {
+                renderStatus(initialStatus);
+            })
+            .catch(err => {
+                container.innerHTML = '<div class="job">Erro ao conectar ao servidor.</div>';
+            });
+
+        // 2. Ouve por atualizações em tempo real
+        socket.on('status-update', (jobs) => {
+            renderStatus(jobs);
+        });
+    </script>
+</body>
+</html>
